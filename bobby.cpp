@@ -29,29 +29,118 @@ typedef multimap< key_t, BamAlignment > group_t;
 typedef pair< group_t::iterator, group_t::iterator > group_range_t;
 
 
-int gap_size( BamAlignment& a, BamAlignment& b ){
-
-    if( a.Position < b.Position ){
-        return b.Position - ( a.Position + a.Length );
-    } else {
-        return a.Position - ( b.Position + b.Length );
-    }
-}
-
-void _output_valid( group_range_t a, group_range_t b ){
+void _output_valid( group_range_t range_a, group_range_t range_b ){
 
     group_t::iterator a_it;
     group_t::iterator b_it;
 
-    for( a_it = a.first; a_it != a.second; ++a_it ){
-        for( b_it = b.first; b_it != b.second; ++b_it ){
+    for( a_it = range_a.first; a_it != range_a.second; ++a_it ){
+        for( b_it = range_b.first; b_it != range_b.second; ++b_it ){
             
-            int gap = gap_size( a_it->second, b_it->second );
+            BamAlignment a = a_it->second;
+            BamAlignment b = b_it->second;
+
+            // ensure 'a' is the most 5' alignment
+            if( b.Position < a.Position ){
+                swap( a, b );
+            }
+
+            int gap = b.Position - ( a.Position + a.Length );
 
             if( gap >= MIN_GAP && gap <= MAX_GAP ){
-                // TOOD arrange complete paired BAM record and write
-                cout << a_it->second.Name << endl;
+
+                BamAlignment o = new BamAlignment();
+
+                o.RefID = a.RefID;
+                o.MateRefID = b.RefID;
+
+                o.MatePosition = b.Position;
+
+                o.MapQuality = a.MapQuality;
+
+                o.SetIsPaired( true );
+                o.SetIsReverseStrand( a.IsReverseStrand() );
+                o.SetIsMateReverseStrand( b.IsReverseStrand() );
+                o.SetIsMapped( true );
+                o.SetIsMateMapped( true );
+
+                o.AddTag( "XQ", "Z", b.Name );
+                o.AddTag( "R2", "Z", b.QueryBases );
+                o.AddTag( "XM", "Z", b.CigarData ); // TODO CigarData to string
+
+                vector< string > cigars;
+                vector< string > flanks;
+                vector< string > seqs;
+                vector< int > positions;
+
+                bool aIsSplat = a.HasTag( "XC" );
+                bool bIsSplat = b.HasTag( "XC" );
+
+                if( aIsSplat ){
+
+                    string a_flanks;
+                    a.GetTag( "XD", a_flanks );
+                    flanks.push_back( a_flanks );
+
+                    int pos;
+                    a.GetTag( "XT", pos ); // TODO does bamtools parse out int automatically?
+                    o.Position = pos;
+                    positions.push_back( a.Position );
+
+                    string seq;
+                    a.GetTag( "XS", seq );
+                    o.QueryBases = seq;
+                    seqs.push_back( a.QueryBases );
+
+                    string cigar;
+                    a.GetTag( "XC", cigar );
+                    o.CigarData = cigar; // TODO cigar string to CigarData
+                    cigars.push_back( a.CigarData ); // TODO CigarData to string
+
+                } else {
+
+                    o.Position = a.Position;
+                    o.CigarData = a.CigarData;
+                    o.QueryBases = a.QueryBases;
+                }
+
+                if( bIsSplat ){
+
+                    string b_flanks;
+                    b.GetTag( "XD", b_flanks );
+                    flanks.push_back( b_flanks );
+
+                    int pos;
+                    b.GetTag( "XT", pos ); // TODO does bamtools parse out int automatically?
+                    positions.push_back( pos );
+
+                    string seq;
+                    b.GetTag( "XS", seq );
+                    seqs.push_back( seq );
+
+                    string cigar;
+                    b.GetTag( "XC", cigar );
+                    cigars.push_back( cigar );
+
+                }
+
+                // both are regular alignments
+                } else {
+
+                    o.AddTag( "R2", "Z", b.QueryBases );
+                    o.CigarData = a.CigarData; // TODO
+                    o.AddTag( "XM", "Z", b.CigarData ); // TODO CigarData to string
+                }
+
+                o.AddTag( "XC", cigars );
+                o.AddTag( "XD", flanks );
+                o.AddTag( "XS", seqs );
+                o.AddTag( "XT", positions );
+                
+                // TODO pass BamWriter and write this alignment.
+                // includes defining header information. how to do this given we're reading multiple files?
             }
+
         }
     }
 }
