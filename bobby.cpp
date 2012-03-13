@@ -5,6 +5,10 @@
 #include <stdint.h>
 #include "api/BamWriter.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+
 #define MIN_GAP 100
 #define MAX_GAP 10000
 
@@ -14,22 +18,55 @@ using namespace BamTools;
 
 typedef int32_t refID_t;
 
-struct key_t {
+struct group_key_t {
     refID_t refID;
     char mateID;
     bool rev;
-    bool operator < ( const key_t &other ) const {
+    bool operator < ( const group_key_t &other ) const {
         return refID < other.refID 
                || ( refID == other.refID && mateID < other.mateID )
                || ( refID == other.refID && mateID == other.mateID && rev < other.rev );
     }
 };
 
-typedef multimap< key_t, BamAlignment > group_t;
+typedef multimap< group_key_t, BamAlignment > group_t;
 typedef pair< group_t::iterator, group_t::iterator > group_range_t;
 
 
-void _output_valid( group_range_t range_a, group_range_t range_b ){
+string cigar_to_string( vector<CigarOp>& cd ){
+    string out = "";
+    vector<CigarOp>::iterator iter = cd.begin();
+    for( ; iter != cd.end() ; ++iter ){
+        char* len;
+        sprintf( len, "%d", iter->Length );
+        out.append( len );
+        out.push_back( iter->Type );
+    }
+    return out;
+}
+
+vector<CigarOp> string_to_cigar( string& s ){
+    vector<CigarOp> ret;
+    string::iterator iter = s.begin();
+    string cur;
+    for( ; iter != s.end(); iter++ ){
+        if( !isdigit(*iter) ){
+            if( !cur.empty() ){
+                CigarOp op;
+                op.Type = *iter;
+                op.Length = atoi( cur.c_str() );
+                ret.push_back( op );
+            }
+            cur.clear();
+        } else {
+            cur.push_back( *iter );
+        }
+    }
+    return ret;
+}
+
+
+void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t range_b ){
 
     group_t::iterator a_it;
     group_t::iterator b_it;
@@ -49,7 +86,7 @@ void _output_valid( group_range_t range_a, group_range_t range_b ){
 
             if( gap >= MIN_GAP && gap <= MAX_GAP ){
 
-                BamAlignment o = new BamAlignment();
+                BamAlignment o;
 
                 o.RefID = a.RefID;
                 o.MateRefID = b.RefID;
@@ -66,7 +103,7 @@ void _output_valid( group_range_t range_a, group_range_t range_b ){
 
                 o.AddTag( "XQ", "Z", b.Name );
                 o.AddTag( "R2", "Z", b.QueryBases );
-                o.AddTag( "XM", "Z", b.CigarData ); // TODO CigarData to string
+                o.AddTag( "XM", "Z", cigar_to_string( b.CigarData ) );
 
                 vector< string > cigars;
                 vector< string > flanks;
@@ -94,8 +131,8 @@ void _output_valid( group_range_t range_a, group_range_t range_b ){
 
                     string cigar;
                     a.GetTag( "XC", cigar );
-                    o.CigarData = cigar; // TODO cigar string to CigarData
-                    cigars.push_back( a.CigarData ); // TODO CigarData to string
+                    o.CigarData = string_to_cigar( cigar );
+                    cigars.push_back( cigar_to_string( a.CigarData ) );
 
                 } else {
 
@@ -121,15 +158,6 @@ void _output_valid( group_range_t range_a, group_range_t range_b ){
                     string cigar;
                     b.GetTag( "XC", cigar );
                     cigars.push_back( cigar );
-
-                }
-
-                // both are regular alignments
-                } else {
-
-                    o.AddTag( "R2", "Z", b.QueryBases );
-                    o.CigarData = a.CigarData; // TODO
-                    o.AddTag( "XM", "Z", b.CigarData ); // TODO CigarData to string
                 }
 
                 o.AddTag( "XC", cigars );
@@ -137,22 +165,20 @@ void _output_valid( group_range_t range_a, group_range_t range_b ){
                 o.AddTag( "XS", seqs );
                 o.AddTag( "XT", positions );
                 
-                // TODO pass BamWriter and write this alignment.
-                // includes defining header information. how to do this given we're reading multiple files?
+                writer.SaveAlignment( o );
             }
-
         }
     }
 }
 
-void output_valid( group_t& group, vector< refID_t >& refs ){
+void output_valid( BamWriter& writer, group_t& group, vector< refID_t >& refs ){
 
-    key_t key_a;
-    key_t key_b;
+    group_key_t key_a;
+    group_key_t key_b;
     group_range_t range_a;
     group_range_t range_b;
+    vector<refID_t>::iterator refs_it;
 
-    vector< refID_t >::iterator refs_it;
     for( refs_it = refs.begin(); refs_it < refs.end(); refs_it++ ){
 
         key_a.refID = *refs_it;
@@ -164,22 +190,26 @@ void output_valid( group_t& group, vector< refID_t >& refs ){
         key_a.rev = true;
         key_b.rev = false;
 
-        _output_valid( group.equal_range( key_a ), group.equal_range( key_b ) );
+        _output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ) );
 
         key_a.rev = false;
         key_b.rev = true;
 
-        _output_valid( group.equal_range( key_a ), group.equal_range( key_b ) );
+        _output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ) );
     }
 }
 
 int main( int argc, char * argv[] ){
 
-    // TODO accept filename args
+    string outputFilename = argv[1];
+
+    // TODO validate args
     // TODO accept min/max gap size args
-    vector< string > inputFilenames;
-    inputFilenames.push_back("alignments.sorted-by-name.picard.bam");
-    inputFilenames.push_back("splats.sorted-by-name.picard.bam");
+
+    vector<string> inputFilenames;
+    for( int i = 2; i < argc; i++ ){
+        inputFilenames.push_back(argv[i]);
+    }
 
     BamMultiReader reader;
     if( !reader.Open( inputFilenames ) ){
@@ -187,18 +217,22 @@ int main( int argc, char * argv[] ){
         return 1;
     }
 
+    BamWriter writer;
+    if( !writer.Open( outputFilename, reader.GetHeader(), reader.GetReferenceData() ) ){
+        cerr << writer.GetErrorString();
+        return 1;
+    }
+
     string current;
-
     group_t group;
-
-    vector< refID_t > refs;
-
+    vector<refID_t> refs;
     BamAlignment a;
+
     while( reader.GetNextAlignment( a ) ){
 
         if( current != a.Name.substr( 0, a.Name.length() - 11 ) ){
 
-            output_valid( group, refs );
+            output_valid( writer, group, refs );
 
             group.clear();
             refs.clear();
@@ -206,7 +240,7 @@ int main( int argc, char * argv[] ){
         
         refs.push_back( a.RefID );
 
-        key_t key;
+        group_key_t key;
         key.refID = a.RefID;
         key.mateID = a.Name.at( a.Name.length() - 12 );
         key.rev = a.IsReverseStrand();
@@ -215,5 +249,5 @@ int main( int argc, char * argv[] ){
 
         current = a.Name.substr( 0, a.Name.length() - 11 );
     }
-    output_valid( group, refs );
+    output_valid( writer, group, refs );
 }
