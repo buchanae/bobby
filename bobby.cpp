@@ -8,11 +8,14 @@
 #include "api/BamMultiReader.h"
 #include "api/BamWriter.h"
 
-#define MIN_GAP 10
-#define MAX_GAP 10000
-
 using namespace std;
 using namespace BamTools;
+
+int MIN_GAP = 10;
+int MAX_GAP = 10000;
+
+BamWriter Alignments;
+ofstream splat_fh("splats", ios::out | ios::trunc);
 
 typedef int32_t refID_t;
 
@@ -27,25 +30,43 @@ struct group_key_t {
     }
 };
 
+struct alignment_key_t {
+    refID_t refID;
+    char mateID;
+    bool rev;
+    int32_t Position;
+    string CigarData;
+    bool operator < ( const alignment_key_t &other ) const {
+        return refID < other.refID
+               || ( refID == other.refID && mateID < other.mateID )
+               || ( refID == other.refID && mateID == other.mateID && rev < other.rev )
+               || ( refID == other.refID && mateID == other.mateID && rev == other.rev && Position < other.Position)
+               || ( refID == other.refID && mateID == other.mateID && rev == other.rev && Position == other.Position && CigarData.compare(other.CigarData) == -1);
+    }
+};
+
 typedef multimap< group_key_t, BamAlignment > group_t;
 
 typedef pair< group_t::iterator, group_t::iterator > group_range_t;
 
 string cigar_to_string( vector<CigarOp>& );
 
-void _output_valid( BamWriter&, group_range_t, group_range_t );
+void _output_valid( BamWriter&, group_range_t, group_range_t, map<alignment_key_t, BamAlignment>& );
 
-void output_valid( BamWriter&, group_t&, map<refID_t,bool>&);
+void output_valid( BamWriter&, group_t&, map<refID_t,bool>&, RefVector&);
 
 void parseID (string&, string&, char&);
+
+string bam2splat(BamAlignment &, RefVector&);
 
 string joinString(const char, vector <string>&);
 
 int main( int argc, char * argv[] ){
-    string outputFilename;
+    string outputFilename, finalAlignments;
 
     if (argc > 2) {
         outputFilename = argv[1];
+        finalAlignments = "aligned.bam";
     } else {
         cerr << "Error - you must give an output file name followed by 1 or more bam files." << std::endl;
         return 1;
@@ -62,8 +83,12 @@ int main( int argc, char * argv[] ){
     reader.Open(inputFilenames);
 
     BamWriter writer;
-    if(!writer.Open( outputFilename, reader.GetHeader(), reader.GetReferenceData() ) ){
-        cerr << writer.GetErrorString();
+    if(!writer.Open(outputFilename, reader.GetHeader(), reader.GetReferenceData())){
+        cerr << writer.GetErrorString() << endl;
+        return 1;
+    }
+    if (!Alignments.Open(finalAlignments, reader.GetHeader(), reader.GetReferenceData())) {
+        cerr << Alignments.GetErrorString() << endl;
         return 1;
     }
 
@@ -71,13 +96,14 @@ int main( int argc, char * argv[] ){
     char mateID;
     group_t group;
     map<refID_t, bool> refs;
+    RefVector refData = reader.GetReferenceData();
 
     BamAlignment a;
     while(reader.GetNextAlignment(a)){
         parseID(a.Name, current, mateID);
 
         if(current.compare(prev) && prev.size() > 0){
-            output_valid(writer, group, refs);
+            output_valid(writer, group, refs, refData);
             group.clear();
             refs.clear();
         }
@@ -93,7 +119,10 @@ int main( int argc, char * argv[] ){
 
         prev = current;
     }
-    output_valid(writer, group, refs );
+    output_valid(writer, group, refs, refData);
+
+    Alignments.Close();
+    splat_fh.close();
 }
 
 void parseID (string& id, string& groupID, char& mateID) {
@@ -121,25 +150,53 @@ string cigar_to_string( vector<CigarOp>& cd ){
     return out;
 }
 
-void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t range_b ){
+string bam2splat(BamAlignment& al, RefVector& refData) {
+    stringstream buffer (stringstream::in | stringstream::out);
+
+    string flanking, strand;
+    int a_start, a_end, b_start, b_end;
+
+    al.GetTag("XD", flanking);
+    a_start = al.Position + 1;
+    a_end = a_start + al.CigarData.at(0).Length - 1;
+    b_start = a_end + al.CigarData.at(1).Length + 1;
+    b_end = b_start + al.CigarData.at(2).Length - 1;
+    strand = (al.IsReverseStrand())? "-" : "+";
+
+    buffer << refData.at(al.RefID).RefName << "\t";
+    buffer << al.CigarData.at(0).Length << "\t";
+    buffer << al.CigarData.at(2).Length << "\t";
+    buffer << al.CigarData.at(1).Length << "\t";
+    buffer << a_start << "\t" << a_end << "\t";
+    buffer << b_start << "\t" << b_end << "\t";
+    buffer << al.QueryBases << "\t1\t" << strand << al.Name;
+    buffer.flush();
+
+    return buffer.str();
+}
+
+void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t range_b , map<alignment_key_t, BamAlignment> &alignments){
     group_t::iterator a_it;
     group_t::iterator b_it;
 
     for( a_it = range_a.first; a_it != range_a.second; ++a_it ){
-        for( b_it = range_b.first; b_it != range_b.second; ++b_it ){        
-
+        for( b_it = range_b.first; b_it != range_b.second; ++b_it ){
+            group_key_t a_key = a_it->first;
             BamAlignment a = a_it->second;
+
+            group_key_t b_key = b_it->first;
             BamAlignment b = b_it->second;
 
             // ensure 'a' is the most 5' alignment
-            if( b.Position < a.Position ) swap(a, b);
+            if( b.Position < a.Position ) {
+                swap(a, b);
+                swap(a_key, b_key);  // Ensure that we can check that alignments are oriented correctly (5'--------->3' 3'<---------5')
+            }
 
             int gap = 0;
 
             // Calculate paired-end gapped alignments using the CigarOp data - NOT the length of the query sequence
-            int a_start = a.Position;
-            int b_start = b.Position;
-            int a_end, a_length, b_end, b_length = 0; 
+            int a_start = a.Position, a_end, a_length = 0, b_start = b.Position, b_end, b_length = 0;
             for (int i = 0; i < a.CigarData.size(); i++)
                 a_length += a.CigarData.at(i).Length;
             a_end = a_start + a_length - 1;
@@ -150,7 +207,24 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
             // calculate gap only if fragments do not overlap
             if (a_end < b_start) gap = (b_start - a_end + 1) - 2; // Calculate the correct size of the insert
 
-            if(gap >= MIN_GAP && gap <= MAX_GAP){
+            if(gap >= MIN_GAP && gap <= MAX_GAP && !a_key.rev && b_key.rev){
+            //if(gap >= MIN_GAP && gap <= MAX_GAP){
+                alignment_key_t a_t;
+                a_t.refID = a.RefID;
+                a_t.mateID = a_key.mateID;
+                a_t.rev = a.IsReverseStrand();
+                a_t.Position = a.Position;
+                a_t.CigarData = cigar_to_string(a.CigarData);
+                if (alignments.find(a_t) == alignments.end()) alignments.insert(pair <alignment_key_t, BamAlignment> (a_t, a));
+
+                alignment_key_t b_t;
+                b_t.refID = b.RefID;
+                b_t.mateID = b_key.mateID;
+                b_t.rev = b.IsReverseStrand();
+                b_t.Position = b.Position;
+                b_t.CigarData = cigar_to_string(b.CigarData);
+                if (alignments.find(b_t) == alignments.end()) alignments.insert(pair <alignment_key_t, BamAlignment> (b_t, b));
+
                 BamAlignment o;
 
                 // Clone main alignment data
@@ -214,13 +288,14 @@ string joinString(const char token, vector <string>& tokens) {
     return data;
 }
 
-void output_valid( BamWriter& writer, group_t& group, map<refID_t,bool>& refs ){
-
+void output_valid( BamWriter& writer, group_t& group, map<refID_t,bool>& refs, RefVector& refData){
     group_key_t key_a;
     group_key_t key_b;
     group_range_t range_a;
     group_range_t range_b;
     map<refID_t,bool>::iterator refs_it;
+    map<alignment_key_t,BamAlignment> good_al;
+    map<alignment_key_t,BamAlignment>::iterator al_it;
 
     for(refs_it = refs.begin(); refs_it != refs.end(); refs_it++ ){
         key_a.refID = refs_it->first;
@@ -232,11 +307,30 @@ void output_valid( BamWriter& writer, group_t& group, map<refID_t,bool>& refs ){
         key_a.rev = true;
         key_b.rev = false;
 
-        _output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ) );
+        _output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ), good_al );
+
+        key_a.rev = true;
+        key_b.rev = true;
+
+        //_output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ), good_al );
 
         key_a.rev = false;
         key_b.rev = true;
 
-       _output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ) );
+        _output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ), good_al );
+
+        key_a.rev = false;
+        key_b.rev = false;
+
+        //_output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ), good_al );
+    }
+
+    for (al_it = good_al.begin(); al_it != good_al.end(); al_it++) {
+        if (al_it->second.CigarData.size() == 3) {
+            string splat = bam2splat(al_it->second, refData);
+            splat_fh << splat << endl;
+        } else {
+            Alignments.SaveAlignment(al_it->second);
+        }
     }
 }
