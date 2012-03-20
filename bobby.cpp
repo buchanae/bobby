@@ -7,15 +7,24 @@
 #include <ctype.h>
 #include "api/BamMultiReader.h"
 #include "api/BamWriter.h"
+#include "tclap/CmdLine.h"
+
+#define VERSION "0.1"
 
 using namespace std;
 using namespace BamTools;
+using namespace TCLAP;
 
-int MIN_GAP = 10;
-int MAX_GAP = 10000;
+int MIN_GAP;
+int MAX_GAP;
 
-BamWriter Alignments;
-ofstream splat_fh("splats", ios::out | ios::trunc);
+BamWriter AlignmentsOut;
+ofstream splatsOut;
+
+// TODO defaulting to a null stream (e.g. /dev/null or some cross-platform version)
+// could clean up the code
+bool outputAlignments;
+bool outputSplats;
 
 typedef int32_t refID_t;
 
@@ -62,34 +71,74 @@ string bam2splat(BamAlignment &, RefVector&);
 string joinString(const char, vector <string>&);
 
 int main( int argc, char * argv[] ){
-    string outputFilename, finalAlignments;
-
-    if (argc > 2) {
-        outputFilename = argv[1];
-        finalAlignments = "aligned.bam";
-    } else {
-        cerr << "Error - you must give an output file name followed by 1 or more bam files." << std::endl;
-        return 1;
-    }
-
-    // TODO validate args
-    // TODO accept min/max gap size args
 
     vector<string> inputFilenames;
-    for (int i = 3; i <= argc; i++)
-        inputFilenames.push_back(argv[i - 1]);
+    string combinedOutFilename, alignmentsOutFilename, splatsOutFilename;
+
+    try {
+        CmdLine cmd("Program description", ' ', VERSION);
+
+        ValueArg<string> combinedOutputArg("o", "out", "Combined output filename (BAM format)", true, "", "combined.bam");
+
+        ValueArg<string> alignmentsOutputArg("a", "alignments", "Alignments output file name (BAM format)", false, "alignments.bam", "alignments.bam");
+        ValueArg<string> splatsOutputArg("s", "splats", "Splat output file name (Splat format)", false, "splats.splat", "splats.splat");
+
+        ValueArg<int> minInsertArg("n", "min-insert", "Minimum insert size", false, 10, "min insert size");
+        ValueArg<int> maxInsertArg("x", "max-insert", "Maximum insert size", false, 10000, "max insert size");
+
+        UnlabeledMultiArg<string> inputArgs("", "Input files (BAM format)", true, "input.bam");
+
+        cmd.add(combinedOutputArg);
+        cmd.add(alignmentsOutputArg);
+        cmd.add(splatsOutputArg);
+        cmd.add(minInsertArg);
+        cmd.add(maxInsertArg);
+
+        // must be added last
+        cmd.add(inputArgs);
+
+        cmd.parse(argc, argv);
+
+        combinedOutFilename = combinedOutputArg.getValue();
+
+        if (alignmentsOutputArg.isSet()) {
+            outputAlignments = true;
+            alignmentsOutFilename = alignmentsOutputArg.getValue();
+        }
+
+        if (splatsOutputArg.isSet()) {
+            outputSplats = true;
+            splatsOutFilename = splatsOutputArg.getValue();
+        }
+
+        MIN_GAP = minInsertArg.getValue();
+        MAX_GAP = maxInsertArg.getValue();
+        inputFilenames = inputArgs.getValue();
+
+    } catch (ArgException &e) {
+        cerr << "Error: " << e.error() << " " << e.argId() << endl;
+    }
+
+    cout << alignmentsOutFilename;
 
     BamMultiReader reader;
     reader.Open(inputFilenames);
 
     BamWriter writer;
-    if(!writer.Open(outputFilename, reader.GetHeader(), reader.GetReferenceData())){
+    if(!writer.Open(combinedOutFilename, reader.GetHeader(), reader.GetReferenceData())){
         cerr << writer.GetErrorString() << endl;
         return 1;
     }
-    if (!Alignments.Open(finalAlignments, reader.GetHeader(), reader.GetReferenceData())) {
-        cerr << Alignments.GetErrorString() << endl;
-        return 1;
+
+    if (outputAlignments) {
+        if (!AlignmentsOut.Open(alignmentsOutFilename, reader.GetHeader(), reader.GetReferenceData())) {
+            cerr << AlignmentsOut.GetErrorString() << endl;
+            return 1;
+        }
+    }
+
+    if (outputSplats) {
+        splatsOut.open(splatsOutFilename.c_str(), ios::out | ios::trunc);
     }
 
     string current, prev;
@@ -121,8 +170,9 @@ int main( int argc, char * argv[] ){
     }
     output_valid(writer, group, refs, refData);
 
-    Alignments.Close();
-    splat_fh.close();
+    if (outputAlignments) AlignmentsOut.Close();
+    if (outputSplats) splatsOut.close();
+
 }
 
 void parseID (string& id, string& groupID, char& mateID) {
@@ -208,7 +258,6 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
             if (a_end < b_start) gap = (b_start - a_end + 1) - 2; // Calculate the correct size of the insert
 
             if(gap >= MIN_GAP && gap <= MAX_GAP && !a_key.rev && b_key.rev){
-            //if(gap >= MIN_GAP && gap <= MAX_GAP){
                 alignment_key_t a_t;
                 a_t.refID = a.RefID;
                 a_t.mateID = a_key.mateID;
@@ -309,28 +358,21 @@ void output_valid( BamWriter& writer, group_t& group, map<refID_t,bool>& refs, R
 
         _output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ), good_al );
 
-        key_a.rev = true;
-        key_b.rev = true;
-
-        //_output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ), good_al );
-
         key_a.rev = false;
         key_b.rev = true;
 
         _output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ), good_al );
-
-        key_a.rev = false;
-        key_b.rev = false;
-
-        //_output_valid( writer, group.equal_range( key_a ), group.equal_range( key_b ), good_al );
     }
 
-    for (al_it = good_al.begin(); al_it != good_al.end(); al_it++) {
-        if (al_it->second.CigarData.size() == 3) {
-            string splat = bam2splat(al_it->second, refData);
-            splat_fh << splat << endl;
-        } else {
-            Alignments.SaveAlignment(al_it->second);
+    if (outputAlignments || outputSplats) {
+        for (al_it = good_al.begin(); al_it != good_al.end(); al_it++) {
+            if (al_it->second.CigarData.size() == 3) {
+                if ( outputSplats ) {
+                    splatsOut << bam2splat(al_it->second, refData) << endl;
+                }
+            } else if (outputAlignments) {
+                AlignmentsOut.SaveAlignment(al_it->second);
+            }
         }
-    }
+   }
 }
