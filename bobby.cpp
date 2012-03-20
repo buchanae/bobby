@@ -1,3 +1,4 @@
+#include <algorithms>
 #include <iostream>
 #include <map>
 #include <locale>
@@ -10,6 +11,8 @@
 #include "tclap/CmdLine.h"
 
 #define VERSION "0.1"
+
+#define MAX_SPLAT_BUFFER_SIZE 1000
 
 using namespace std;
 using namespace BamTools;
@@ -54,6 +57,26 @@ struct alignment_key_t {
     }
 };
 
+struct splat_t {
+    string ref;
+    int a_start;
+    int a_end;
+    int b_start;
+    int b_end;
+    vector<string> readIDs;
+    // TODO fields for holding all splat info
+
+    // TODO define str() method
+
+    bool operator < ( const splat_t &other ) const {
+        return ref < other.ref
+               || ( ref == other.ref && a_start < other.a_start )
+               || ( ref == other.ref && a_start == other.a_start && a_end < other.a_end )
+               || ( ref == other.ref && a_start == other.a_start && a_end == other.a_end && b_start < other.b_start )
+               || ( ref == other.ref && a_start == other.a_start && a_end == other.a_end && b_start == other.b_start && b_end < other.b_end );
+    }
+};
+
 typedef multimap< group_key_t, BamAlignment > group_t;
 
 typedef pair< group_t::iterator, group_t::iterator > group_range_t;
@@ -69,6 +92,8 @@ void parseID (string&, string&, char&);
 string bam2splat(BamAlignment &, RefVector&);
 
 string joinString(const char, vector <string>&);
+
+std::string open_temp(std::string path, std::fstream& f);
 
 int main( int argc, char * argv[] ){
 
@@ -200,20 +225,22 @@ string cigar_to_string( vector<CigarOp>& cd ){
     return out;
 }
 
-string bam2splat(BamAlignment& al, RefVector& refData) {
+splat_t bam2splat_t(BamAlignment& al, RefVector& refData) {
     stringstream buffer (stringstream::in | stringstream::out);
 
-    string flanking, strand;
+    string ref, flanking, strand;
     int a_start, a_end, b_start, b_end;
 
+    // TODO need to keep read ID
     al.GetTag("XD", flanking);
     a_start = al.Position + 1;
     a_end = a_start + al.CigarData.at(0).Length - 1;
     b_start = a_end + al.CigarData.at(1).Length + 1;
     b_end = b_start + al.CigarData.at(2).Length - 1;
     strand = (al.IsReverseStrand())? "-" : "+";
+    ref = refData.at(al.RefID).RefName;
 
-    buffer << refData.at(al.RefID).RefName << "\t";
+    buffer << ref << "\t";
     buffer << al.CigarData.at(0).Length << "\t";
     buffer << al.CigarData.at(2).Length << "\t";
     buffer << al.CigarData.at(1).Length << "\t";
@@ -222,7 +249,15 @@ string bam2splat(BamAlignment& al, RefVector& refData) {
     buffer << al.QueryBases << "\t1\t" << strand << al.Name;
     buffer.flush();
 
-    return buffer.str();
+    splat_t splat;
+    splat.ref = ref;
+    splat.a_start = a_start;
+    splat.a_end = a_end;
+    splat.b_start = b_start;
+    splat.b_end = b_end;
+    splat.str = buffer.str();
+
+    return splat;
 }
 
 void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t range_b , map<alignment_key_t, BamAlignment> &alignments){
@@ -365,14 +400,115 @@ void output_valid( BamWriter& writer, group_t& group, map<refID_t,bool>& refs, R
     }
 
     if (outputAlignments || outputSplats) {
+
+        vector<splat_t> buffer;
+        vector<fstream> tempFiles;
+
         for (al_it = good_al.begin(); al_it != good_al.end(); al_it++) {
-            if (al_it->second.CigarData.size() == 3) {
-                if ( outputSplats ) {
-                    splatsOut << bam2splat(al_it->second, refData) << endl;
+
+            // TODO this is a bad way to check for this
+            // what if our read length is > 100? or < 10?
+            if (al_it->second.CigarData.size() != 3) {
+                if (outputSplats) {
+
+                    if (buffer.size() >= MAX_SPLAT_BUFFER_SIZE) {
+
+                        stable_sort(buffer.begin(), buffer.end());
+
+                        fstream tempfile;
+                        open_temp("/tmp", tempfile);
+
+                        vector<splat_t>::iterator buff_it = buffer.begin();
+                        for( ; buff_it != buffer.end(); ++buff_it ){
+                            tempfile << *buff_it.str << endl;
+                        }
+
+                        tempFiles.push_back(tempfile);
+                        buffer.clear();
+                    }
+
+                    buffer.push_back( bam2splat_t(al_it->second, refData) );
                 }
+                // TODO duplicated above, abstract this
+                stable_sort(buffer.begin(), buffer.end());
+
+                fstream tempfile;
+                open_temp("/tmp", tempfile);
+
+                vector<splat_t>::iterator buff_it = buffer.begin();
+                for( ; buff_it != buffer.end(); ++buff_it ){
+                    tempfile << *buff_it.str << endl;
+                }
+
+                tempFiles.push_back(tempfile);
+                buffer.clear();
+                // end TODO
+
             } else if (outputAlignments) {
                 AlignmentsOut.SaveAlignment(al_it->second);
             }
         }
+
+        if (outputSplats) {
+
+            map<splat_t, fstream> merger;
+
+            vector<fstream>::iterator f_it = tempFiles.begin();
+            for ( ; f_it < tempFiles.end(); ++f_it ){
+                *f_it.seekp(ios_base::beg);
+                // TODO duplicated below
+                string line;
+                getline( f, line );
+                splat_t next = string2splat_t( line );
+                merger.insert( pair<splat_t, fstream>( next, *f_it ) );
+            }
+            
+            splat_t current = merger.begin()->first;
+            fstream f = merger.begin()->second;
+            merger.erase( merger.begin() );
+            string line;
+            getline( f, line );
+            splat_t next = string2splat_t( line );
+            merger.insert( pair<splat_t, fstream>( next, f) );
+
+            while( merger.begin() != merger.end() ){
+
+                // TODO duplicated above, could be abstracted
+                splat_t splat = merger.begin()->first;
+                fstream f = merger.begin()->second;
+                merger.erase( merger.begin() );
+                string line;
+                getline( f, line );
+                splat_t next = string2splat_t( line );
+                merger.insert( pair<splat_t, fstream>( next, f) );
+
+                if ( splat.ref == current.ref && splat.a_start == current.a_start &&
+                     splat.a_end == current.a_end && splat.b_start == current.b_start &&
+                     splat.b_end == current.b_end ) {
+
+                    current.readIDs.insert( current.readIDs.end(), splat.readIDs.begin(), splat.readIDs.end() );
+
+                } else {
+                    splatsOut << current.str() << endl;
+                    current = splat;
+                }
+            }
+            splatsOut << current.str() << endl;
+        }
    }
+}
+
+std::string open_temp(std::string path, std::fstream& f) {
+    path += "/bobby-XXXXXX";
+    std::vector<char> dst_path(path.begin(), path.end());
+    dst_path.push_back('\0');
+
+    int fd = mkstemp(&dst_path[0]);
+    if(fd != -1) {
+        path.assign(dst_path.begin(), dst_path.end() - 1);
+        f.open(path.c_str(), 
+               std::ios_base::trunc | std::ios_base::in | std::ios_base::out);
+        close(fd);
+    }
+    return path;
 }
