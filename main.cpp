@@ -13,6 +13,7 @@
 
 #include "utils.h"
 #include "types.h"
+#include "splats.h"
 #include "SplatPool.h"
 
 #define VERSION "0.1"
@@ -38,10 +39,6 @@ void _output_valid( BamWriter&, group_range_t, group_range_t, map<alignment_key_
 void output_valid( BamWriter&, group_t&, map<int32_t,bool>&, RefVector&);
 
 void parseID (string&, string&, char&);
-
-splat_t bam2splat(BamAlignment&, RefVector&);
-
-splat_t string2splat( string );
 
 int main( int argc, char * argv[] ){
 
@@ -183,26 +180,6 @@ string cigar_to_string( vector<CigarOp>& cd ){
     return out;
 }
 
-splat_t bam2splat(BamAlignment& al, RefVector& refData) {
-
-    splat_t splat;
-
-    splat.ref = refData.at(al.RefID).RefName;
-    al.GetTag("XD", splat.flanks);
-    splat.a_start = al.Position + 1;
-    splat.a_end = splat.a_start + al.CigarData.at(0).Length - 1;
-    splat.b_start = splat.a_end + al.CigarData.at(1).Length + 1;
-    splat.b_end = splat.b_start + al.CigarData.at(2).Length - 1;
-    splat.seq = al.QueryBases;
-
-    stringstream readID (stringstream::in | stringstream::out);
-    readID << (al.IsReverseStrand())? "-" : "+";
-    readID << al.Name;
-    splat.readIDs.push_back(readID.str());
-
-    return splat;
-}
-
 void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t range_b , map<alignment_key_t, BamAlignment> &alignments){
     group_t::iterator a_it;
     group_t::iterator b_it;
@@ -284,14 +261,14 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
                 o.AddTag("XM", "Z", cigar_to_string(b.CigarData));
 
                 //Add Splat tag data
-                if (a.HasTag("XD") || b.HasTag("XD")) {
+                if (isSplat(a) || isSplat(b)){
                     vector< string > flanks;
                     string a_flanks;
-                    if (a.HasTag("XD")) {
+                    if (isSplat(a)) {
                         a.GetTag("XD", a_flanks);
                         flanks.push_back(a_flanks);
                     }
-                    if (b.HasTag("XD")) {
+                    if (isSplat(b)) {
                         b.GetTag("XD", a_flanks );
                         flanks.push_back(a_flanks);
                     }
@@ -333,11 +310,11 @@ void output_valid( BamWriter& writer, group_t& group, map<int32_t,bool>& refs, R
 
     if (outputAlignments || outputSplats) {
 
-        SplatPool pool;
+        SplatPool pool(refData);
 
         for (al_it = good_al.begin(); al_it != good_al.end(); al_it++) {
 
-            if (al_it->second.isSplat())
+            if (isSplat(al_it->second))
                 if (outputSplats) pool.add(al_it->second);
             else if (outputAlignments) AlignmentsOut.SaveAlignment(al_it->second);
         }
@@ -345,21 +322,23 @@ void output_valid( BamWriter& writer, group_t& group, map<int32_t,bool>& refs, R
         if (outputSplats) {
 
             SplatPool::Reader* reader = pool.reader();
+            RefVector refs = reader->GetReferenceData();
+
             splat_t prev;
-            while( reader->hasNext() ){
+            BamAlignment al;
+            while( reader->GetNextAlignment(al) ){
 
-                if( prev.ref.empty() ) prev = reader->read();
+                splat_t splat = bam2splat(al, refs);
+
+                if( prev.ref.empty() ) prev = splat;
                 else {
-                    splat_t splat = reader->read();
-
                     if( splat.shouldMerge( prev ) ) splat.merge( prev );
                     else splatsOut << prev.str() << endl;
 
                     prev = splat;
                 }
-
-                if( !reader->hasNext() ) splatsOut << prev.str() << endl;
             }
+            splatsOut << prev.str() << endl;
         }
     }
 }

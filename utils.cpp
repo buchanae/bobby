@@ -1,5 +1,10 @@
-string joinString(const char token, vector <string>& tokens) {
-    string data;
+#include <string>
+#include <vector>
+
+#include "utils.h"
+
+std::string joinString(const char token, std::vector<std::string>& tokens) {
+    std::string data;
 
     for (int i = 0; i < tokens.size(); i++) {
        data.append(tokens.at(i));

@@ -8,6 +8,8 @@
 
 #include "api/BamAlignment.h"
 
+#include "utils.h"
+
 using std::string;
 using std::stringstream;
 using std::vector;
@@ -40,31 +42,23 @@ struct alignment_key_t {
     }
 };
 
-struct splat_key_t {
-    int32_t ref;
+struct splat_pos_t {
     int a_start;
     int a_end;
     int b_start;
     int b_end;
 
-    bool operator < ( const splat_key_t& other ) const {
-        return ref < other.ref
-               || ( ref == other.ref && a_start < other.a_start )
-               || ( ref == other.ref && a_start == other.a_start && a_end < other.a_end )
-               || ( ref == other.ref && a_start == other.a_start 
-                    && a_end == other.a_end && b_start < other.b_start )
-               || ( ref == other.ref && a_start == other.a_start && a_end == other.a_end 
-                    && b_start == other.b_start && b_end < other.b_end );
+    bool operator== ( const splat_pos_t& other ) const {
+        return a_start == other.a_start && a_end == other.a_end 
+               && b_start == other.b_start && b_end == other.b_end;
     }
+
 };
 
 struct splat_t {
     string ref;
     string flanks;
-    int a_start;
-    int a_end;
-    int b_start;
-    int b_end;
+    splat_pos_t pos;
     string seq;
     vector<std::string> readIDs;
 
@@ -74,31 +68,20 @@ struct splat_t {
 
         buffer << ref << "\t";
         buffer << flanks << "\t";
-        buffer << a_end - a_start + 1 << "\t";
-        buffer << b_end - b_start + 1 << "\t";
-        buffer << b_start - a_end << "\t";
-        buffer << a_start << "\t" << a_end << "\t";
-        buffer << b_start << "\t" << b_end << "\t";
+        buffer << pos.a_end - pos.a_start + 1 << "\t";
+        buffer << pos.b_end - pos.b_start + 1 << "\t";
+        buffer << pos.b_start - pos.a_end << "\t";
+        buffer << pos.a_start << "\t" << pos.a_end << "\t";
+        buffer << pos.b_start << "\t" << pos.b_end << "\t";
         buffer << seq << "\t";
-
-        stringstream joinedReadIDs;
-        vector<string>::iterator r_it = readIDs.begin();
-        for( ; r_it != readIDs.end(); ++r_it ){
-
-            if (r_it != readIDs.begin()) joinedReadIDs << ",";
-            joinedReadIDs << *r_it;
-        }
-        
-        buffer << readIDs.size() << "\t";
-        buffer << joinedReadIDs.str() << "\t";
+        buffer << joinString(',', readIDs);
         buffer.flush();
 
         return buffer.str();
     }
 
     bool shouldMerge (splat_t& other) {
-        return ref == other.ref && a_start == other.a_start && a_end == other.a_end 
-               && b_start == other.b_start && b_end == other.b_end;
+        return ref == other.ref && pos == other.pos;
     }
 
     void merge (splat_t& other) {

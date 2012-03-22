@@ -6,42 +6,37 @@
 #include <string>
 #include <vector>
 
+#include "api/BamAlignment.h"
+#include "api/BamMultiReader.h"
+#include "api/BamWriter.h"
+
 #include "types.h"
 
 #define DEFAULT_MAX_SIZE 10000
-
-
-std::string open_temp (std::string path, std::fstream& f);
 
 class SplatPool {
 
     public:
         class Reader;
 
-        SplatPool (void);
-        SplatPool (int);
+        SplatPool (const BamTools::RefVector&);
+        SplatPool (int, const BamTools::RefVector&);
         ~SplatPool (void);
         void flush (void);
-        void add (BamAlignment&);
-        Reader* reader (void);
+        void add (BamTools::BamAlignment&);
+        Reader* reader(void);
 
     private:
         int MAX_SIZE;
-        std::vector<BamAlignment> buffer;
-        std::vector<std::string> tempFilenames;
+        // TODO maybe buffer should be pointers?
+        std::vector<BamTools::BamAlignment> buffer;
+        std::vector<std::string> filenames;
+        BamTools::RefVector references;
 };
 
-class SplatPool::Reader {
-
-    // TODO BamAlignment as key makes sense?
-    std::map<BamAlignment, std::fstream*> heads;
-    void updateHead (std::fstream&);
-
+class SplatPool::Reader : public BamTools::BamMultiReader {
     public:
-        Reader (std::vector<std::string>&);
-        ~Reader (void);
-        bool hasNext (void);
-        BamAlignment read (void);
+        bool GetNextAlignment(BamTools::BamAlignment&);
 };
 
 #endif
