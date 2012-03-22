@@ -1,5 +1,5 @@
 OUT = bobby
-BAMTOOLS = 
+BAMTOOLS = /Users/abuchanan/bamtools
 
 all:
-	g++ bobby.cpp -o $(OUT) -I$(BAMTOOLS)/include -L$(BAMTOOLS)/lib -lbamtools
+	g++ main.cpp SplatPool.cpp types.h SplatPool.h -o $(OUT) -I$(BAMTOOLS)/include -L$(BAMTOOLS)/lib -lbamtools
