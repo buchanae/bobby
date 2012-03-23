@@ -36,7 +36,7 @@ string cigar_to_string( vector<CigarOp>& );
 
 void _output_valid( BamWriter&, group_range_t, group_range_t, map<alignment_key_t, BamAlignment>& );
 
-void output_valid( BamWriter&, group_t&, map<int32_t,bool>&, RefVector&);
+void output_valid( BamWriter&, SplatPool&, group_t&, map<int32_t,bool>&, RefVector&);
 
 void parseID (string&, string&, char&);
 
@@ -99,8 +99,6 @@ int main( int argc, char * argv[] ){
         cerr << "Error: " << e.error() << " " << e.argId() << endl;
     }
 
-    cout << alignmentsOutFilename;
-
     BamMultiReader reader;
     reader.Open(inputFilenames);
 
@@ -127,12 +125,15 @@ int main( int argc, char * argv[] ){
     map<int32_t, bool> refs;
     RefVector refData = reader.GetReferenceData();
 
+    // TODO
+    SplatPool pool(refData);
+
     BamAlignment a;
     while(reader.GetNextAlignment(a)){
         parseID(a.Name, current, mateID);
 
         if(current.compare(prev) && prev.size() > 0){
-            output_valid(writer, group, refs, refData);
+            output_valid(writer, pool, group, refs, refData);
             group.clear();
             refs.clear();
         }
@@ -148,11 +149,33 @@ int main( int argc, char * argv[] ){
 
         prev = current;
     }
-    output_valid(writer, group, refs, refData);
+    output_valid(writer, pool, group, refs, refData);
+
+    if (outputSplats) {
+
+        SplatPool::Reader* reader = pool.reader();
+        RefVector refs = reader->GetReferenceData();
+
+        splat_t prev;
+        BamAlignment al;
+        while( reader->GetNextAlignment(al) ){
+
+            splat_t splat = bam2splat(al, refs);
+
+            if( prev.ref.empty() ) prev = splat;
+            else {
+                if( splat.shouldMerge( prev ) ) splat.merge( prev );
+                else splatsOut << prev.str() << endl;
+
+                prev = splat;
+            }
+        }
+        // TODO what if prev is empty?
+        splatsOut << prev.str() << endl;
+        splatsOut.close();
+    }
 
     if (outputAlignments) AlignmentsOut.Close();
-    if (outputSplats) splatsOut.close();
-
 }
 
 void parseID (string& id, string& groupID, char& mateID) {
@@ -281,7 +304,7 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
     }
 }
 
-void output_valid( BamWriter& writer, group_t& group, map<int32_t,bool>& refs, RefVector& refData){
+void output_valid( BamWriter& writer, SplatPool& pool, group_t& group, map<int32_t,bool>& refs, RefVector& refData){
     group_key_t key_a;
     group_key_t key_b;
     group_range_t range_a;
@@ -310,35 +333,11 @@ void output_valid( BamWriter& writer, group_t& group, map<int32_t,bool>& refs, R
 
     if (outputAlignments || outputSplats) {
 
-        SplatPool pool(refData);
-
         for (al_it = good_al.begin(); al_it != good_al.end(); al_it++) {
 
             if (isSplat(al_it->second)) {
                 if (outputSplats) pool.add(al_it->second);
             } else if (outputAlignments) AlignmentsOut.SaveAlignment(al_it->second);
-        }
-
-        if (outputSplats) {
-
-            SplatPool::Reader* reader = pool.reader();
-            RefVector refs = reader->GetReferenceData();
-
-            splat_t prev;
-            BamAlignment al;
-            while( reader->GetNextAlignment(al) ){
-
-                splat_t splat = bam2splat(al, refs);
-
-                if( prev.ref.empty() ) prev = splat;
-                else {
-                    if( splat.shouldMerge( prev ) ) splat.merge( prev );
-                    else splatsOut << prev.str() << endl;
-
-                    prev = splat;
-                }
-            }
-            splatsOut << prev.str() << endl;
         }
     }
 }

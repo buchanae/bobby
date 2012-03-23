@@ -12,7 +12,7 @@
 
 #include "types.h"
 
-#define DEFAULT_MAX_SIZE 10000
+#define DEFAULT_MAX_SIZE 100000
 
 class SplatPool {
 

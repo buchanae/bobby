@@ -23,7 +23,8 @@ using BamTools::BamWriter;
 using BamTools::RefVector;
 
 SplatPool::SplatPool (const RefVector& r) {
-    SplatPool(DEFAULT_MAX_SIZE, r);
+    MAX_SIZE = DEFAULT_MAX_SIZE;
+    references = r;
 }
 
 SplatPool::SplatPool (int m, const RefVector& r) {
@@ -78,12 +79,13 @@ void SplatPool::add (BamAlignment& splat) {
 
     if (!isSplat(splat)) return;
 
-    splat.AddTag("XName", "Z", splat.Name);
+    splat.AddTag("XN", "Z", splat.Name);
 
     splat_pos_t pos = getSplatPosition(splat);
 
     stringstream key;
-    //key << splat.RefID << "-" << pos.a_start << "-" pos.a_end; 
+    key << splat.RefID << "-";
+    key << pos.a_start << "-" << pos.a_end << "-";
     key << pos.b_start << "-" << pos.b_end;
 
     splat.Name = key.str();
@@ -93,6 +95,9 @@ void SplatPool::add (BamAlignment& splat) {
 }
 
 SplatPool::Reader* SplatPool::reader(void){
+
+    if (buffer.size() > 0) flush();
+
     Reader* r = new Reader();
     r->Open( filenames );
     return r;
@@ -100,6 +105,9 @@ SplatPool::Reader* SplatPool::reader(void){
 
 bool SplatPool::Reader::GetNextAlignment(BamAlignment& alignment) {
     bool ret = BamMultiReader::GetNextAlignment(alignment);
-    if (ret) alignment.GetTag("XName", alignment.Name);
+    if (ret) {
+        alignment.GetTag("XN", alignment.Name);
+        alignment.RemoveTag("XN");
+    }
     return ret;
 }
