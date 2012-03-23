@@ -99,6 +99,7 @@ SplatPool::Reader* SplatPool::reader(void){
 }
 
 bool SplatPool::Reader::GetNextAlignment(BamAlignment& alignment) {
-    BamMultiReader::GetNextAlignment(alignment);
-    alignment.GetTag("XName", alignment.Name);
+    bool ret = BamMultiReader::GetNextAlignment(alignment);
+    if (ret) alignment.GetTag("XName", alignment.Name);
+    return ret;
 }

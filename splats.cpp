@@ -30,8 +30,10 @@ splat_t bam2splat(BamTools::BamAlignment& al, BamTools::RefVector& refData) {
     splat.pos = getSplatPosition(al);
     splat.seq = al.QueryBases;
 
+    string strand = al.IsReverseStrand() ? "-" : "+";
+
     stringstream readID (stringstream::in | stringstream::out);
-    readID << (al.IsReverseStrand())? "-" : "+";
+    readID << strand;
     readID << al.Name;
     splat.readIDs.push_back(readID.str());
 

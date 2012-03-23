@@ -314,9 +314,9 @@ void output_valid( BamWriter& writer, group_t& group, map<int32_t,bool>& refs, R
 
         for (al_it = good_al.begin(); al_it != good_al.end(); al_it++) {
 
-            if (isSplat(al_it->second))
+            if (isSplat(al_it->second)) {
                 if (outputSplats) pool.add(al_it->second);
-            else if (outputAlignments) AlignmentsOut.SaveAlignment(al_it->second);
+            } else if (outputAlignments) AlignmentsOut.SaveAlignment(al_it->second);
         }
 
         if (outputSplats) {
