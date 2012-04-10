@@ -18,6 +18,9 @@
 
 #define VERSION "0.1"
 
+#define DEFAULT_MIN_GAP 100
+#define DEFAULT_MAX_GAP 10000
+
 using namespace std;
 using namespace BamTools;
 
@@ -60,10 +63,10 @@ int main( int argc, char * argv[] ){
             "splats.splat", "splats.splat");
 
         TCLAP::ValueArg<int> minInsertArg("n", "min-insert", 
-            "Minimum insert size", false, 10, "min insert size");
+            "Minimum insert size", false, DEFAULT_MIN_GAP, "min insert size");
 
         TCLAP::ValueArg<int> maxInsertArg("x", "max-insert", 
-            "Maximum insert size", false, 10000, "max insert size");
+            "Maximum insert size", false, DEFAULT_MAX_GAP, "max insert size");
 
         TCLAP::UnlabeledMultiArg<string> inputArgs("", "Input files (BAM format)", 
             true, "input.bam");

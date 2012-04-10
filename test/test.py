@@ -1,4 +1,5 @@
 import argparse
+from copy import copy
 import random
 import string
 
@@ -33,7 +34,7 @@ class ID(object):
 
 class SAM(object):
 
-    def __init__(self, ID, ref, pos, rev_strand=False, extra=''):
+    def __init__(self, ID, ref, pos, rev_strand=False):
         self.ID = ID
         self.ref = ref
         self.pos = pos
@@ -41,7 +42,7 @@ class SAM(object):
 
         self.seq = make_seq()
         self.cigar = '{}M'.format(len(self.seq))
-        self.extra = extra
+        self.extra = []
 
         self.mapq = '255'
         self.rnext = '*'
@@ -58,14 +59,85 @@ class SAM(object):
         return cls(ID(make_ID_base()), random.choice(REFS), 
                    random.choice(xrange(REF_LENGTH - READ_LENGTH)))
 
-    def sister(self):
-        return SAM(self.ID.sister(), self.ref, self.end_pos + random.choice(GAP_RANGE),
-                   not self.rev_strand, self.extra)
+    @classmethod
+    def valid_reg_pair(cls):
+        a = cls.random()
+        b = cls(a.ID.sister(), a.ref, a.end_pos + random.choice(GAP_RANGE),
+                not a.rev_strand)
+        return a, b
+
+    @classmethod
+    def invalid_distance_reg_pair(cls):
+        a, b = cls.valid_reg_pair()
+        b.pos = a.end_pos + 50
+        return a, b
+
+    @classmethod
+    def invalid_strand_reg_pair(cls):
+        a, b = cls.valid_reg_pair()
+        b.rev_strand = a.rev_strand
+        return a, b
+
+    @classmethod
+    def invalid_orientation_reg_pair(cls):
+        a, b = cls.valid_reg_pair()
+        a.rev_strand = True
+        b.rev_strand = False
+        return a, b
+
+    @classmethod
+    def valid_splat_pair(cls):
+        a, b = cls.valid_reg_pair()
+        a.extra.append('XD:Z:GT-AG')
+        a.cigar = '30M200N30M'
+        b.pos = a.end_pos + 200 + random.choice(GAP_RANGE)
+        b.extra.append('XD:Z:GT-AG')
+        b.cigar = '30M200N30M'
+        return a, b
+
+    @classmethod
+    def valid_mergeable_splat_pair(cls):
+        a, b = cls.valid_reg_pair()
+        a.extra.append('XD:Z:GT-AG')
+        a.cigar = '30M200N30M'
+        b.pos = a.end_pos + 200 + random.choice(GAP_RANGE)
+        b.extra.append('XD:Z:GT-AG')
+        b.cigar = '30M200N30M'
+
+        c = copy(a)
+        d = copy(b)
+
+        c.ID = ID(make_ID_base())
+        d.ID = c.ID.sister()
+        return a, b, c, d
+
+    @classmethod
+    def valid_unmergeable_strand_splat_pair(cls):
+        a, b, c, d = cls.valid_mergeable_splat_pair()
+        c.rev_strand = not a.rev_strand
+        d.rev_strand = not b.rev_strand
+        return a, b, c, d
+
+    @classmethod
+    def valid_reg_splat_pair(cls):
+        a, b = cls.valid_reg_pair()
+        b.pos = a.end_pos + random.choice(GAP_RANGE)
+        b.extra.append('XD:Z:GT-AG')
+        b.cigar = '30M200N30M'
+        return a, b
+
+    @classmethod
+    def valid_splat_reg_pair(cls):
+        a, b = cls.valid_reg_pair()
+        a.extra.append('XD:Z:GT-AG')
+        a.cigar = '30M200N30M'
+        b.pos = a.end_pos + 200 + random.choice(GAP_RANGE)
+        return a, b
 
     def __str__(self):
         a = '\t'.join([
             str(self.ID), 
-            '0' if self.rev_strand else '16', 
+            '16' if self.rev_strand else '0', 
             self.ref, 
             str(self.pos), 
             self.mapq,
@@ -77,7 +149,7 @@ class SAM(object):
             self.qual, 
         ])
         if self.extra:
-            a = '\t'.join([a, self.extra])
+            a = '\t'.join([a] + self.extra)
         return a
 
 
@@ -89,10 +161,15 @@ if __name__ == '__main__':
     # generate random SAM data
     out = []
     for x in xrange(5):
-        s = SAM.random()
-        out.append(s)
-        out.append(s.sister())
-
+        #out.extend(SAM.valid_reg_pair())
+        #out.extend(SAM.valid_splat_pair())
+        #out.extend(SAM.valid_mergeable_splat_pair())
+        #out.extend(SAM.valid_reg_splat_pair())
+        #out.extend(SAM.valid_splat_reg_pair())
+        #out.extend(SAM.invalid_distance_reg_pair())
+        #out.extend(SAM.invalid_strand_reg_pair())
+        #out.extend(SAM.invalid_orientation_reg_pair())
+        out.extend(SAM.valid_unmergeable_strand_splat_pair())
 
     # print SAM header
     fh.write('@HD\tVN:1.0\n')
