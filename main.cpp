@@ -255,53 +255,60 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
                 b_t.CigarData = cigar_to_string(b.CigarData);
                 if (alignments.find(b_t) == alignments.end()) alignments.insert(pair <alignment_key_t, BamAlignment> (b_t, b));
 
-                BamAlignment o;
+                // create copies of BamAlignments a and b
+                BamAlignment x(a);
+                BamAlignment y(b);
 
-                // Clone main alignment data
-                o.Name = a.Name;
-                o.AlignmentFlag = a.AlignmentFlag;
-                o.RefID = a.RefID;
-                o.Position = a.Position;
-                o.MapQuality = 255; // Do not keep track of quality data...
-                o.CigarData = a.CigarData;
-                o.Length = a.Length;
-                o.QueryBases = a.QueryBases;
-                o.Qualities = "*"; // Again - do no keep track of quality data...
-                o.Bin = a.Bin;
+                // TODO I don't like that we lose the original read ID
+                String baseName;
+
+                parseID(x.Name, baseName, String a);
+                x.Name = baseName;
+
+                parseID(y.Name, baseName, String a);
+                y.Name = baseName;
 
                 // Add in mate pair info
-                o.MateRefID = b.RefID;
-                o.MatePosition = b.Position;
-                o.InsertSize = gap;
+                x.MateRefID = b.RefID;
+                x.MatePosition = b.Position;
+                x.InsertSize = gap;
+
+                y.MateRefID = a.RefID;
+                y.MatePosition = a.Position;
+                y.InsertSize = gap;
 
                 // Update Mapping information appropriately
-                o.SetIsPaired(true);
-                o.SetIsReverseStrand(a.IsReverseStrand());
-                o.SetIsMateReverseStrand(b.IsReverseStrand());
-                o.SetIsMapped(true);
-                o.SetIsMateMapped(true);
+                x.SetIsPaired(true);
+                x.SetIsReverseStrand(a.IsReverseStrand());
+                x.SetIsMateReverseStrand(b.IsReverseStrand());
+                x.SetIsMapped(true);
+                x.SetIsMateMapped(true);
+                x.SetIsSecondMate(true);
+                x.SetIsProperPair(true);
 
-                // Keep track of all data of mate pair
-                o.AddTag("XQ", "Z", b.Name);
-                o.AddTag("R2", "Z", b.QueryBases);
-                o.AddTag("XM", "Z", cigar_to_string(b.CigarData));
+                y.SetIsPaired(true);
+                y.SetIsReverseStrand(b.IsReverseStrand());
+                y.SetIsMateReverseStrand(a.IsReverseStrand());
+                y.SetIsMapped(true);
+                y.SetIsMateMapped(true);
+                y.SetIsSecondMate(true);
+                y.SetIsProperPair(true);
 
                 //Add Splat tag data
-                if (isSplat(a) || isSplat(b)){
-                    vector< string > flanks;
-                    string a_flanks;
-                    if (isSplat(a)) {
-                        a.GetTag("XD", a_flanks);
-                        flanks.push_back(a_flanks);
-                    }
-                    if (isSplat(b)) {
-                        b.GetTag("XD", a_flanks );
-                        flanks.push_back(a_flanks);
-                    }
-                    o.AddTag("XD", "Z", joinString(',', flanks));
+                if (isSplat(a)){
+                    string flanks;
+                    a.GetTag("XD", flanks);
+                    x.AddTag("XD", "Z", flanks);
+                }
+
+                if (isSplat(b)){
+                    string flanks;
+                    b.GetTag("XD", flanks);
+                    y.AddTag("XD", "Z", flanks);
                 }
  
-                writer.SaveAlignment(o);
+                writer.SaveAlignment(x);
+                writer.SaveAlignment(y);
             }
         }
     }
