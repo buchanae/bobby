@@ -260,22 +260,25 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
                 BamAlignment y(b);
 
                 // TODO I don't like that we lose the original read ID
-                String baseName;
+                string baseName;
 
-                parseID(x.Name, baseName, String a);
+                char ignore;
+                parseID(x.Name, baseName, ignore);
                 x.Name = baseName;
 
-                parseID(y.Name, baseName, String a);
+                parseID(y.Name, baseName, ignore);
                 y.Name = baseName;
+
+                int insert = a.Length + gap + b.Length;
 
                 // Add in mate pair info
                 x.MateRefID = b.RefID;
                 x.MatePosition = b.Position;
-                x.InsertSize = gap;
+                x.InsertSize = insert;
 
                 y.MateRefID = a.RefID;
                 y.MatePosition = a.Position;
-                y.InsertSize = gap;
+                y.InsertSize = -1 * insert;
 
                 // Update Mapping information appropriately
                 x.SetIsPaired(true);
