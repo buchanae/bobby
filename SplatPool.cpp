@@ -24,11 +24,25 @@ using BamTools::RefVector;
 
 SplatPool::SplatPool (const RefVector& r) {
     MAX_SIZE = DEFAULT_MAX_SIZE;
+    TMP_DIR = DEFAULT_TMP_DIR;
     references = r;
 }
 
 SplatPool::SplatPool (int m, const RefVector& r) {
     MAX_SIZE = m;
+    TMP_DIR = DEFAULT_TMP_DIR;
+    references = r;
+}
+
+SplatPool::SplatPool (string tmp, const BamTools::RefVector& r ){
+    MAX_SIZE = DEFAULT_MAX_SIZE;
+    TMP_DIR = tmp;
+    references = r;
+}
+
+SplatPool::SplatPool (int m, string tmp, const BamTools::RefVector& r ) {
+    MAX_SIZE = m;
+    TMP_DIR = tmp;
     references = r;
 }
 
@@ -46,7 +60,7 @@ void SplatPool::flush (void) {
     std::sort(buffer.begin(), buffer.end(), BamTools::Algorithms::Sort::ByName());
 
     // open temp. file
-    string path = "/tmp/SplatPool-XXXXXX";
+    string path = TMP_DIR + "/SplatPool-XXXXXX";
     std::vector<char> dst_path(path.begin(), path.end());
     dst_path.push_back('\0');
 
@@ -90,7 +104,7 @@ void SplatPool::add (BamAlignment& splat) {
 
     splat.Name = key.str();
 
-    if (buffer.size() >= MAX_SIZE) flush();
+    if ((int)buffer.size() >= MAX_SIZE) flush();
     buffer.push_back( splat );
 }
 

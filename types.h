@@ -70,10 +70,11 @@ struct splat_t {
         buffer << flanks << "\t";
         buffer << pos.a_end - pos.a_start + 1 << "\t";
         buffer << pos.b_end - pos.b_start + 1 << "\t";
-        buffer << pos.b_start - pos.a_end << "\t";
+        buffer << pos.b_start - pos.a_end - 1 << "\t";
         buffer << pos.a_start << "\t" << pos.a_end << "\t";
         buffer << pos.b_start << "\t" << pos.b_end << "\t";
         buffer << seq << "\t";
+        buffer << readIDs.size() << "\t";
         buffer << joinString(',', readIDs);
         buffer.flush();
 

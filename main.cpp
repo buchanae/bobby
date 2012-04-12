@@ -43,7 +43,8 @@ void parseID (string&, string&, char&);
 int main( int argc, char * argv[] ){
 
     vector<string> inputFilenames;
-    string combinedOutFilename, alignmentsOutFilename, splatsOutFilename;
+    string combinedOutFilename, alignmentsOutFilename, splatsOutFilename, splatsOutTemp;
+    int max_records;
 
     try {
         TCLAP::CmdLine cmd("Program description", ' ', VERSION);
@@ -65,16 +66,25 @@ int main( int argc, char * argv[] ){
         TCLAP::ValueArg<int> maxInsertArg("x", "max-insert", 
             "Maximum insert size", false, 10000, "max insert size");
 
-        TCLAP::UnlabeledMultiArg<string> inputArgs("", "Input files (BAM format)", 
-            true, "input.bam");
+        TCLAP::UnlabeledMultiArg<string> inputArgs("", 
+            "Input files (BAM format)", true,
+            "input.bam");
 
-        cmd.add(combinedOutputArg);
-        cmd.add(alignmentsOutputArg);
+        TCLAP::ValueArg<int> maxRecords("r", "max-records", 
+            "Maximum records per sorted file.", false, 500000, "max");
+
+        TCLAP::ValueArg<string> tempDir("T", "temp-dir", 
+            "Temp directory for sorting.", false, "/tmp", "temp directory");
+
+        cmd.add(maxRecords);
+        cmd.add(tempDir);
         cmd.add(splatsOutputArg);
+        cmd.add(alignmentsOutputArg);
         cmd.add(minInsertArg);
         cmd.add(maxInsertArg);
 
         // must be added last
+        cmd.add(combinedOutputArg);
         cmd.add(inputArgs);
 
         cmd.parse(argc, argv);
@@ -89,6 +99,8 @@ int main( int argc, char * argv[] ){
         if (splatsOutputArg.isSet()) {
             outputSplats = true;
             splatsOutFilename = splatsOutputArg.getValue();
+            splatsOutTemp = tempDir.getValue();
+            max_records = maxRecords.getValue();
         }
 
         MIN_GAP = minInsertArg.getValue();
@@ -126,7 +138,7 @@ int main( int argc, char * argv[] ){
     RefVector refData = reader.GetReferenceData();
 
     // TODO
-    SplatPool pool(refData);
+    SplatPool pool(max_records, splatsOutTemp, refData);
 
     BamAlignment a;
     while(reader.GetNextAlignment(a)){
@@ -152,7 +164,6 @@ int main( int argc, char * argv[] ){
     output_valid(writer, pool, group, refs, refData);
 
     if (outputSplats) {
-
         SplatPool::Reader* reader = pool.reader();
         RefVector refs = reader->GetReferenceData();
 
@@ -181,9 +192,9 @@ int main( int argc, char * argv[] ){
 void parseID (string& id, string& groupID, char& mateID) {
     groupID.clear();
 
-    int i = 0;
+    unsigned int i = 0;
     while (i < id.size()) {
-        if (id.at(i) != ' ') groupID += id.at(i);
+        if (id.at(i) != ' ' && id.at(i) != '/') groupID += id.at(i);
         else {
             mateID = (i + 1 < id.size()) ? id.at(i + 1) : '0';
             i = id.size();
@@ -225,15 +236,17 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
 
             // Calculate paired-end gapped alignments using the CigarOp data - NOT the length of the query sequence
             int a_start = a.Position, a_end, a_length = 0, b_start = b.Position, b_end, b_length = 0;
-            for (int i = 0; i < a.CigarData.size(); i++)
+
+            for (unsigned int i = 0; i < a.CigarData.size(); i++)
                 a_length += a.CigarData.at(i).Length;
             a_end = a_start + a_length - 1;
-            for (int i = 0; i < b.CigarData.size(); i++)
+
+            for (unsigned int i = 0; i < b.CigarData.size(); i++)
                 b_length += b.CigarData.at(i).Length;
             b_end = b_start + b_length - 1;
 
-            // calculate gap only if fragments do not overlap
-            if (a_end < b_start) gap = (b_start - a_end + 1) - 2; // Calculate the correct size of the insert
+            // REMEMBER: negative gaps mean our values overlap
+            gap = (b_start - a_end + 1) - 2; // Calculate the correct size of the insert
 
             if(gap >= MIN_GAP && gap <= MAX_GAP && !a_key.rev && b_key.rev){
                 alignment_key_t a_t;
