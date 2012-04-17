@@ -1,6 +1,7 @@
 #include <iostream>
 #include <map>
 #include <locale>
+#include <sstream>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -221,6 +222,8 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
     group_t::iterator a_it;
     group_t::iterator b_it;
 
+    int valid_count = 0;
+
     for( a_it = range_a.first; a_it != range_a.second; ++a_it ){
         for( b_it = range_b.first; b_it != range_b.second; ++b_it ){
             group_key_t a_key = a_it->first;
@@ -252,6 +255,9 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
             gap = (b_start - a_end + 1) - 2; // Calculate the correct size of the insert
 
             if(gap >= MIN_GAP && gap <= MAX_GAP && !a_key.rev && b_key.rev){
+
+                valid_count++;
+
                 alignment_key_t a_t;
                 a_t.refID = a.RefID;
                 a_t.mateID = a_key.mateID;
@@ -272,15 +278,21 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
                 BamAlignment x(a);
                 BamAlignment y(b);
 
-                // TODO I don't like that we lose the original read ID
-                string baseName;
+                x.AddTag("XN", "Z", x.Name);
+                y.AddTag("XN", "Z", y.Name);
 
+                string baseName;
                 char ignore;
+                std::stringstream sstrm;
+
                 parseID(x.Name, baseName, ignore);
-                x.Name = baseName;
+                sstrm << baseName << "-" << valid_count;
+                x.Name = sstrm.str();
+                sstrm.str("");
 
                 parseID(y.Name, baseName, ignore);
-                y.Name = baseName;
+                sstrm << baseName << "-" << valid_count;
+                y.Name = sstrm.str();
 
                 int insert = a.Length + gap + b.Length;
 
@@ -327,6 +339,7 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
  
                 writer.SaveAlignment(x);
                 writer.SaveAlignment(y);
+
             }
         }
     }
