@@ -294,6 +294,7 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
                 y.InsertSize = -1 * insert;
 
                 // Update Mapping information appropriately
+                x.Qualities.clear();
                 x.SetIsPaired(true);
                 x.SetIsReverseStrand(a.IsReverseStrand());
                 x.SetIsMateReverseStrand(b.IsReverseStrand());
@@ -302,6 +303,7 @@ void _output_valid( BamWriter& writer, group_range_t range_a, group_range_t rang
                 x.SetIsSecondMate(true);
                 x.SetIsProperPair(true);
 
+                y.Qualities.clear();
                 y.SetIsPaired(true);
                 y.SetIsReverseStrand(b.IsReverseStrand());
                 y.SetIsMateReverseStrand(a.IsReverseStrand());
