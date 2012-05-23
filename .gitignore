@@ -2,3 +2,4 @@ test_files/
 bobby
 makePairs
 *.[sb]am
+build/
